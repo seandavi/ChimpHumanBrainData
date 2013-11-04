@@ -1,0 +1,337 @@
+\documentclass{article}
+%%%%%%%%%%%%%%%%%%%%%%%% Standard Packages %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+\usepackage{epsfig}
+\usepackage{graphicx}
+\usepackage{graphics}
+\usepackage{amssymb}
+\usepackage{amsmath}
+\usepackage{mathrsfs}
+\usepackage{fancyvrb}
+\usepackage{theorem}
+\usepackage{underscore}
+\usepackage{color}
+\usepackage{caption}
+\usepackage{comment}
+\usepackage{fancyhdr}
+\usepackage{lscape}
+
+\newcommand{\Rfunction}[1]{{\texttt{#1}}}
+\newcommand{\Rmethod}[1]{{\texttt{#1}}}
+\newcommand{\Robject}[1]{{\texttt{#1}}}
+\newcommand{\Rpackage}[1]{{\textsf{#1}}}
+\newcommand{\Rfunarg}[1]{{\texttt{#1}}}
+\newcommand{\Rclass}[1]{{\textit{#1}}}
+
+\newcommand{\code}[1]{{\texttt{#1}}}
+\newcommand{\file}[1]{{\texttt{#1}}}
+
+\newcommand{\software}[1]{\textsf{#1}}
+\newcommand{\R}{\software{R}}
+\newcommand{\bioc}{\software{BioConductor}}
+
+%% Excercises and Questions
+\theoremstyle{break} \newtheorem{Ex}{Exercise}
+\theoremstyle{break} \newtheorem{Q}{Question}
+%% And solution or answer
+\newenvironment{solution}{\color{blue}}{\bigskip}
+
+\usepackage[margin=1in]{geometry}
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\rhead{}
+\renewcommand{\footrulewidth}{\headrulewidth}
+
+\SweaveOpts{eps=FALSE}
+
+
+\title{Differential Expression Analysis using LIMMA}
+\author{Naomi S. Altman\\
+Department of Statistics\\
+Penn State University\\
+{\small naomi@stat.psu.edu}}
+\date{June , 2010}
+\thispagestyle{fancy}
+
+
+\begin{document}
+\SweaveOpts{concordance=TRUE}
+\maketitle
+\section{Introduction}
+In this lab we will do differential expression analysis of a complex experiment using Affymetrix@ Genechip arrays.
+
+\section{The Data}
+Khaitovich et al (2004) considered gene expression in 7 homologous regions of human and chimpanzee brains. There were 3 human brains and 3 chimpanzee
+brains available for the study. Each brain was dissected to obtain tissue samples for each of the 7 regions.  This is called a split plot design.
+Each brain is a ``whole plot" yielding a tissue sample for each region.  The brains are classified into species which
+is the whole plot factor.  The dissected portions of the brain are called ``subplots" and region is the subplot factor.  The interaction between species 
+and region is also considered a subplot effect.
+
+The factors ``species'' and ``region'' are arranged in a balanced factorial design, because each combination of species and region was sampled with the
+same number of biological replicates.  However, there is also a blocking factor ``brain'' with 6 levels representing the 6 individuals.
+ 
+The samples were hybridized to a variety of Affymetrix@ Genechips and are available as experiment E-AFMX-2 at
+http://www.ebi.ac.uk/aerep/dataselection?expid=352682122.  We will use only 4 of the brain regions: prefrontal cortex, caudate nucleus, cerebellum and
+Broca's region and only one of the Genechips, HG_U95B with one hybridization per sample.
+
+The data have been compiled into a Bioconductor dataset called \texttt{ChimpHumanBrainData}.
+
+To start, we need to load the data into R.  
+<<echo=FALSE>>=
+options(width=95)
+@
+<<getData,echo=TRUE, eval=TRUE>>=
+library('ChimpHumanBrainData')
+library(affy)
+celfileDir = system.file('extdata',package='ChimpHumanBrainData')
+celfileNames = list.celfiles(celfileDir)
+brainBatch=ReadAffy(filenames=celfileNames,celfile.path=celfileDir,compress=TRUE)
+
+@
+
+The sample names for brainBatch are the cel file names, which are not informative.  We will replace them with more informative names, and then 
+extract the probewise raw expression values for quality assessment.  The \texttt{paste} and \texttt{rep} command are very handy for creating 
+names.    The array names are coded ``a_xny'' where n is the replicate number,
+x is either ``c'' for chimpanzee or ``h'' for human, and the brain regions are a) prefrontal cortex, d) caudate nucleus e) cerebellum or f) Broca's region.
+First print the sampleNames to be sure the arrays are in the right order.  Then replace the names with the more informative names.
+<<createNames,echo=T>>=
+sampleNames(brainBatch)
+sampleNames(brainBatch)=paste(rep(c("CH","HU"),each=12),rep(c(1:3,1:3),each=4),
+  rep(c("Prefrontal","Caudate","Cerebellum","Broca"),6),sep="")
+@
+We should at minimum check quality by doing some scatterplot matrices of the log2(expression) values.  We could do a hexplom plot of each tissue.
+<<fig=TRUE,eval=TRUE,echo=TRUE>>=
+brain.expr=exprs(brainBatch)
+library(hexbin)
+plot(hexplom(log2(brain.expr[,paste(rep(c("CH","HU"),each=3),
+  c(1:3,1:3),rep("Prefrontal",6),sep="")])))
+@
+
+Notice that the most dense data are along the diagonal, and that the arrays of the same species are more correlated than the arrays from different species.
+\begin{Ex}
+Draw hexplom plots for the other 3 brain regions.  Do any of the arrays appear to be different than the others?
+\end{Ex}
+We should set up the treatment names and blocks.  This is readily done using \texttt{paste} and \texttt{rep}.  The treatment names are the same as
+the sample names, but the replicate numbers are dropped.
+There is one block label for each brain.
+<<>>=
+trts=factor(paste(rep(c("CH","HU"),each=12),
+  rep(c("Prefrontal","Caudate","Cerebellum","Broca"),6),sep=""))
+blocks=factor(rep(1:6,each=4))
+@
+Finally, we should normalize the expression values and combine into probeset summaries using a method such as RMA.
+<<quiet=TRUE>>=
+brain.rma=rma(brainBatch)
+@
+We might also want to do some quality checks after normalization.
+
+\section{LIMMA analysis}
+We are now ready to perform analysis in LIMMA. The steps are:
+\begin{enumerate}
+\item Compute $S^2_p$ the pooled variance.  To do this, we need to compute within region variance for each gene, and  
+the correlation among regions from the same brain (averaged across all the genes).
+\item Create the coefficient matrix for the contrasts.
+\item Compute the estimated contrasts.
+\item Compute the moderated contrast t-test for each gene.
+\item Plot the histogram of p-values for each contrast for each gene.
+\item Create the list of significant genes based on the p-values, adjusted p-values or FDR estimates.
+\end{enumerate}
+
+\subsection{Compute $S^2_p$}
+There are 3 steps to computing the pooled variance.
+\begin{enumerate}
+\item Create a design matrix for the treatment effects.
+\item If there are blocks, compute the within block correlation for each gene.
+\item Fit the model for the treatment effects to obtain the pooled variance.
+\end{enumerate}
+
+A design matrix is a matrix whose columns give the coefficients of the linear model. There is one row for each sample. The simplest way to set up the matrix is with an incidence 
+matrix that has value 1 if the column belongs to the treatment and 0 otherwise.
+Since we have already created the factor \texttt{trts} which connects the columns of the expression matrix to the treatment names, the design
+matrix is readily created.
+<<>>=
+library(limma)
+design.trt=model.matrix(~0+trts)
+@
+By default, \texttt{model.matrix} includes a column of all 1's representing $\mu$ in the ANOVA model $Y_{ij}=\mu+\alpha_i+$error.  
+In this case, the fitted values will be estimates of $\mu$ and the $\alpha$'s.  We prefer to eliminate this column (``0+") because 
+then the fitted values will be the treatment mean expression value for each gene in each treatment, which are quantities we usually want to 
+compute.  You might want to print \texttt{design.trt} to see what it looks like.
+
+If there are blocks or technical replicates the correlation of genes within the blocks need to be computed.  This requires the design matrix and 
+the blocking factor.  In our case, the blocking factor is called \texttt{blocks}.  The function \texttt{duplicateCorrelation} requires the package
+\texttt{statmod} which may  not be automatically downloaded to your R directory with the Bioconductor routines.  If R cannot find it, you will need to 
+install it from a CRAN site.  Note also that \texttt{duplicateCorrelation} is a time-consuming computation.  Be patient.
+
+<<>>=
+library(statmod
+        )
+corfit <- duplicateCorrelation(brain.rma, design.trt, block = blocks)
+@
+
+The within-block correlation for each gene is stored on as hyperbolic arctan(correlation).  So to obtain a histogram of the correlations, you need
+to use the \texttt{tanh} function:
+
+<<fig=TRUE,eval=TRUE,echo=TRUE>>=
+hist(tanh(corfit$atanh.correlations))
+@
+
+Notice that the correlations are mainly positive and have a mode around 0.6.  A consensus correlation is computed by discarding the most extreme
+outliers, averaging the remainder on the hyperbolic arctan scale, and then transforming back to a correlation.   This is stored in component
+\texttt{consensus.correlation}.  \texttt{LIMMA} assumes that the correlation induced by the blocks is the same for all genes and uses the consensus.
+
+We are now ready to compute the pooled sample variance for each gene.  
+As a side effect, we also compute the sample mean expression of each gene in each treatment (remembering that
+after RMA normalization, the data are on the log2 scale).  
+
+<<>>=
+fitTrtMean <- lmFit(brain.rma, design.trt, block = blocks, cor = corfit$consensus.correlation)
+@
+
+The output \texttt{fitTrtMean} has several components, but only 2 of these are of interest.  Component \texttt{coefficients} contains the mean expression
+for each gene in each treatment.  Component \texttt{sigma} has the estimate of $S_p$.  (Notice this the pooled SD, not the pooled variance.)
+
+\subsection{Create the coefficient matrix for the contrasts}
+We need to compute the coefficient matrix for any contrasts we want to do.  We do not need to worry about the rank of this matrix, 
+as we will obtain
+the pooled variances from \texttt{fitTrtMean}.
+
+We need to decide what contrasts are interesting to us.  For this lab, we will look at 6 contrasts: 
+\begin{enumerate}
+\item Average chimpanzee versus average human
+\item Chimpanzee versus human for each region
+\item The interaction between species and the comparison of cerebellum to Broca's region.
+\end{enumerate}
+
+Note that the treatment names are taken from the columns of the design matrix.  To make more useful names for the final output, we will want to rename the
+columns of the contrast matrix.
+
+<<>>=
+colnames(design.trt)
+contrast.matrix=makeContrasts(
+  (trtsCHBroca+trtsCHCaudate+trtsCHCerebellum+trtsCHPrefrontal)/4
+     -(trtsHUBroca+trtsHUCaudate+trtsHUCerebellum+trtsHUPrefrontal)/4,
+  trtsCHBroca-trtsHUBroca,
+  trtsCHCaudate-trtsHUCaudate,
+  trtsCHCerebellum-trtsHUCerebellum,
+  trtsCHPrefrontal-trtsHUPrefrontal,
+  (trtsCHCerebellum-trtsHUCerebellum)-(trtsCHBroca-trtsHUBroca),
+ levels=design.trt)
+colnames(contrast.matrix)=
+  c("ChVsHu","Broca","Caudate","Cerebellum","Prefrontal","Interact")
+@
+
+The resulting contrast coefficient matrix has one row for each treatment and one column for each contrast.
+
+\subsection{Compute the estimated contrasts.}
+
+We simply fit the contrast matrix to the previous fitted model:
+
+<<>>=
+fit.contrast=contrasts.fit(fitTrtMean,contrast.matrix)
+@
+
+\subsection{Compute the moderated contrast t-test.}
+
+The \texttt{eBayes} command will compute the consensus pooled variance, and then use it to compute the empirical Bayes (moderated) pooled variance 
+for each gene.  This also adjusts the degrees of freedom for the contrast t-tests.  The command also computes the t-tests and associated p-values.
+
+<<>>=
+efit.contrast=eBayes(fit.contrast)
+@
+
+The interesting components of this output are the estimated contrasts, which are stored in the component \texttt{coefficient} and the contrast 
+p-values,
+which are stored in component \texttt{p.value}.
+
+\subsection{Plot the p-values.}
+It is important to remember that when the null hypothesis is true for every comparison, the p-values should be uniformly distributed and we expect to
+have false detections.  In the more usual situation that some of the genes differentially express, we will have both false detections and false
+nondetections.  As simple way of visualizing what to expect is to plot a histogram of p-values for each contrast.  Below we put all 6 histograms on
+a single plot and use the contrast names as labels.
+
+<<fig=TRUE,eval=TRUE,echo=TRUE>>=
+par(mfrow=c(2,3))
+for (i in 1:ncol(efit.contrast$p.value)) {
+hist(efit.contrast$p.value[,i],main=colnames(efit.contrast$p.value)[i])
+}
+@
+
+Notice that the overall species contrast has the most differentially expressing genes (small p-values).  
+All of the comparisons have a large percentage of differentially expressing genes.  We will want to use
+a multiple comparisons procedure that adapts to having a large number of non-null hypotheses such as the Benjamini and Yuketiel or Storey methods.
+All of the plots show sharp peaks of small p-values.  This indicates that we have good detection power in this study.  When the power is poor, 
+the histogram drops slowly towards the flat area.
+
+\subsection{Compute the gene list}
+The most statistically significant genes for each contrast can be assembled into spreadsheets.  There are several ways to do this.
+\texttt{LIMMA} provides 2 functions, \texttt{topTable} and \texttt{decideTests} to assemble gene lists.  I prefer to compute FDR or q-value estimates or adjusted p-values for 
+each gene and output the treatment means and estimated contrasts, p-values and FDR or q-values to a comma separated text file which I can import 
+to a spreadsheet.
+
+To use  \texttt{topTable}, select a contrast and one of the adjustment methods.  Of those available, Benjamini and Yuketiel (2001) (``BY") 
+is a good general purpose choice.  You also need probeset ids, which can either be extracted from the original data or from the row names of the
+p-value matrix.
+
+To limit the output to the most statistically significant genes, set the input parameter \texttt{p.value} to the 
+maximum adjusted p-value or estimated FDR 
+that you want to consider and the input parameter \texttt{n} to the maximum number of genes you want on the list.  If you want a complete list,
+set \texttt{p.value=1.0} and \texttt{n=X} where X is bigger than the total number of probesets on the array.
+
+For example to get the top 10 genes with p<$10^{-5}$ for the overall comparison and for the interaction contrast:
+<<>>=
+genes=geneNames(brainBatch)
+topTable(efit.contrast,coef=1,adjust.method="BY",n=10,p.value=1e-5,genelist=genes)
+topTable(efit.contrast,coef=6,adjust.method="BY",n=10,p.value=1e-5,genelist=genes)
+@
+The columns of the table are the row number of the gene, the gene id, the estimated contrast, the expression mean over all arrays, contrast t-value, 
+contrast p-value, contrast adjusted p-value or estimated FDR and the estimated log-odds probability ratio that the gene is differentially expressed.
+
+The \texttt{decideTests} function can be used to create indicator variables for significance of contrasts with a variety of options.
+
+As an alternative, \texttt{write.table} can be used to create a comma separated text file, using \texttt{cbind} to concatenate matrices.
+
+<<>>=
+write.table(file="fits.txt",
+  cbind(genes,fitTrtMean$coefficients,efit.contrast$coefficients,efit.contrast$p.value),
+  row.names=F,
+  col.names=c("GeneID",colnames(fitTrtMean$coefficients),colnames(efit.contrast$p.value), 
+  paste("p",colnames(efit.contrast$coefficients))),sep=",")
+@
+\begin{Ex}
+Append adjusted p-values to the table above using either \texttt{p.adjust} or \texttt{qvalue}.  Note that to use \texttt{qvalue} with \texttt{apply} 
+you need to write a wrapper function.  For example
+
+<<>>=
+library(qvalue)
+q.values=apply(efit.contrast$p.value,2, function(x) qvalue(x)$qvalues)
+@
+\end{Ex}
+
+
+ 
+\begin{thebibliography}{30}
+\bibitem{Benjamini}
+Benjamini, Y., and Yekutieli, D. (2001). The control of the false discovery rate in multiple testing under dependency. 
+\textit{Annals of Statistics},\textbf{29}: 1165?-1188.
+\bibitem{Khaitovich}
+ Khaitovich, P., Muetzel, B., She, X., Lachmann, M., Hellmann, I., Dietzsch, J., Steigele, S., Do, H. H., Weiss, G., 
+ Enard, W., Heissig, F., Arendt, T., Nieselt-Struwe, K., Eichler, E. E., P\"a\"abo, S. (2004)
+Regional patterns of gene expression in human and chimpanzee brains.
+\textit{Genome research}, \textbf{14} (8) :1462--73.
+\bibitem{Smyth}
+Smyth, G. K. (2004). Linear models and empirical Bayes methods for assessing differential expression in microarray experiments. 
+\textit{Statistical Applications in Genetics and Molecular Biology}, \textbf{3}, Article 3. http://www.bepress.com/sagmb/vol3/iss1/art3.
+\bibitem{Storey}
+Storey JD. (2003) The positive false discovery rate: A Bayesian interpretation and the q-value. \textit{Annals of Statistics}, \textbf{31}: 2013--2035. 
+\end{thebibliography}
+
+\section*{SessionInfo}
+
+<<sessionInfo,results=tex,echo=FALSE>>=
+toLatex(sessionInfo())
+@ 
+<<>>=
+print(gc())
+@
+ 
+\end{document}
