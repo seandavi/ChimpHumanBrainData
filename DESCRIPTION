@@ -1,12 +1,12 @@
 Package: ChimpHumanBrainData
 Type: Package
 Title: Chimp and human brain data package
-Version: 1.0
-Date: 2013-10-29
+Version: 1.0.1
+Date: 2013-11-04
 Author: Roman Jaksik, Naomi Altman, and Sean Davis
 Maintainer: Sean Davis <sdavis2@mail.nih.gov>
 Description: This data package contains chimp and human brain data extracted from the ArrayExpress 
-accession E-AFMX-2.  Both human and chimp RNAs were run on human hgu95av2 Affymetrix arrays.  It 
-is a useful dataset for tutorials. 
+   accession E-AFMX-2.  Both human and chimp RNAs were run on human hgu95av2 Affymetrix arrays.  It 
+   is a useful dataset for tutorials. 
 Depends: affy,qvalue,limma,hexbin,statmod
 License: MIT
