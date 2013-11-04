@@ -1,3 +1,8 @@
+%\VignetteIndexEntry{ChimpHumanBrainData}
+%\VignetteDepends{ChimpHumanBrainData}
+%\VignetteKeywords{data}
+%\VignetteKeywords{ChimpHumanBrainData}
+%\VignettePackage{ChimpHumanBrainData}
 \documentclass{article}
 %%%%%%%%%%%%%%%%%%%%%%%% Standard Packages %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 \usepackage{epsfig}
@@ -49,7 +54,7 @@
 Department of Statistics\\
 Penn State University\\
 {\small naomi@stat.psu.edu}}
-\date{June , 2010}
+\date{November, 2013}
 \thispagestyle{fancy}
 
 
@@ -163,8 +168,7 @@ the blocking factor.  In our case, the blocking factor is called \texttt{blocks}
 install it from a CRAN site.  Note also that \texttt{duplicateCorrelation} is a time-consuming computation.  Be patient.
 
 <<>>=
-library(statmod
-        )
+library(statmod)
 corfit <- duplicateCorrelation(brain.rma, design.trt, block = blocks)
 @
 
