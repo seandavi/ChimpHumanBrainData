@@ -3,7 +3,7 @@ Type: Package
 Title: Chimp and human brain data package
 Version: 1.0
 Date: 2013-10-29
-Author: Roman Jaksik
+Author: Roman Jaksik, Naomi Altman, and Sean Davis
 Maintainer: Sean Davis <sdavis2@mail.nih.gov>
 Description: This data package contains chimp and human brain data, both run on human hgu95av2 Affymetrix arrays.  It is a useful dataset for tutorials. 
 Depends: affy,qvalue,limma,hexbin,statmod
